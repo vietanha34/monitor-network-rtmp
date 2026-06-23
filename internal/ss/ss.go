@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -17,12 +18,23 @@ type Connection struct {
 	LocalPort int
 	DestIP    string
 	DestPort  int
+	// PID is the owning process ID, or "0" when ss cannot determine it
+	// (e.g. the socket belongs to another user and the exporter is not
+	// running as root). "0" is used instead of "" so the label value is
+	// always a valid non-empty Prometheus label.
+	PID string
 }
 
-// List runs `ss -H -t -n state established` and returns connections
-// whose peer (destination) port equals targetPort.
+// pidRe extracts the process id from ss process info like
+// users:(("ffmpeg",pid=12345,fd=6)).
+var pidRe = regexp.MustCompile(`pid=(\d+)`)
+
+// List runs `ss -H -t -n -p state established` and returns connections
+// whose peer (destination) port equals targetPort. The -p flag requests
+// process info so the owning PID can be captured; it requires root (or
+// CAP_NET_ADMIN) to see PIDs of sockets owned by other users.
 func List(ctx context.Context, ssPath string, targetPort int) ([]Connection, error) {
-	cmd := exec.CommandContext(ctx, ssPath, "-H", "-t", "-n", "state", "established")
+	cmd := exec.CommandContext(ctx, ssPath, "-H", "-t", "-n", "-p", "state", "established")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -50,9 +62,19 @@ func parseLines(out []byte, targetPort int) []Connection {
 			LocalPort: localPort,
 			DestIP:    destIP,
 			DestPort:  destPort,
+			PID:       parsePID(line),
 		})
 	}
 	return conns
+}
+
+// parsePID extracts the owning process id from a single ss line, returning
+// "0" when no pid= field is present (socket owned by another user / no -p).
+func parsePID(line []byte) string {
+	if m := pidRe.FindSubmatch(line); m != nil {
+		return string(m[1])
+	}
+	return "0"
 }
 
 // ParseConnFields extracts the local and peer address:port from a single `ss`

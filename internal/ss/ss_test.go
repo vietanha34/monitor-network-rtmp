@@ -39,7 +39,7 @@ func TestParseLines(t *testing.T) {
 	if len(conns) != 3 {
 		t.Fatalf("got %d connections, want 3: %+v", len(conns), conns)
 	}
-	want0 := Connection{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: "93.184.216.34", DestPort: 1935}
+	want0 := Connection{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: "93.184.216.34", DestPort: 1935, PID: "0"}
 	if conns[0] != want0 {
 		t.Errorf("conns[0] = %+v, want %+v", conns[0], want0)
 	}
@@ -47,6 +47,39 @@ func TestParseLines(t *testing.T) {
 	if ipv6.LocalIP != "2001:db8::1" || ipv6.LocalPort != 51234 ||
 		ipv6.DestIP != "2001:db8::2" || ipv6.DestPort != 1935 {
 		t.Errorf("ipv6 conn = %+v, want {2001:db8::1 51234 2001:db8::2 1935}", ipv6)
+	}
+}
+
+func TestParseLinesWithPID(t *testing.T) {
+	// Real `ss -H -t -n -p` output includes users:(("proc",pid=N,fd=N)).
+	input := []byte("0      0      10.0.0.5:38211    93.184.216.34:1935 users:((\"ffmpeg\",pid=12345,fd=6))\n" +
+		"0      0      10.0.0.5:38212    93.184.216.34:1935 users:((\"nginx\",pid=99,fd=23))\n")
+	conns := parseLines(input, 1935)
+	if len(conns) != 2 {
+		t.Fatalf("got %d connections, want 2", len(conns))
+	}
+	if conns[0].PID != "12345" {
+		t.Errorf("conns[0].PID = %q, want 12345", conns[0].PID)
+	}
+	if conns[1].PID != "99" {
+		t.Errorf("conns[1].PID = %q, want 99", conns[1].PID)
+	}
+}
+
+func TestParsePID(t *testing.T) {
+	cases := []struct {
+		line string
+		want string
+	}{
+		{`users:(("ffmpeg",pid=12345,fd=6))`, "12345"},
+		{`users:(("nginx",pid=99,fd=23))`, "99"},
+		{"no process info here", "0"},
+		{"", "0"},
+	}
+	for _, tc := range cases {
+		if got := parsePID([]byte(tc.line)); got != tc.want {
+			t.Errorf("parsePID(%q) = %q, want %q", tc.line, got, tc.want)
+		}
 	}
 }
 

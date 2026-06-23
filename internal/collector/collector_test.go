@@ -107,9 +107,9 @@ func TestCollectorAccumulatorAndStaleRemoval(t *testing.T) {
 
 	// --- Scrape 1: 2 conns to destA, 1 to destB ---
 	ssConns = []ss.Connection{
-		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935},
-		{LocalIP: "10.0.0.5", LocalPort: 38212, DestIP: destA, DestPort: 1935},
-		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935},
+		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, PID: "100"},
+		{LocalIP: "10.0.0.5", LocalPort: 38212, DestIP: destA, DestPort: 1935, PID: "200"},
+		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935, PID: "300"},
 	}
 	flows = []flow.Flow{
 		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 24000, SentPkts: 120, RecvBytes: 16000, RecvPkts: 80},
@@ -123,14 +123,14 @@ func TestCollectorAccumulatorAndStaleRemoval(t *testing.T) {
 	assertFloat(t, mustCounter(t, mfs, "netrtmp_bytes_total", lblDir(destA, "sent")), 26000, "bytes destA sent scrape1")
 	assertFloat(t, mustCounter(t, mfs, "netrtmp_bytes_total", lblDir(destA, "received")), 17000, "bytes destA recv scrape1")
 	assertFloat(t, mustCounter(t, mfs, "netrtmp_bytes_total", lblDir(destB, "sent")), 600, "bytes destB sent scrape1")
-	if v, ok := gaugeVal(mfs, "netrtmp_connection_bytes", lblConn(destA, 38212, "sent")); !ok || v != 2000 {
+	if v, ok := gaugeVal(mfs, "netrtmp_connection_bytes", lblConn(destA, 38212, "200", "sent")); !ok || v != 2000 {
 		t.Errorf("connection_bytes destA:38212 sent = %v (ok=%v), want 2000", v, ok)
 	}
 
 	// --- Scrape 2: drop conn 38212, bump 38211 (24000->50000 sent, 16000->33000 recv) ---
 	ssConns = []ss.Connection{
-		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935},
-		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935},
+		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, PID: "100"},
+		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935, PID: "300"},
 	}
 	flows = []flow.Flow{
 		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 50000, SentPkts: 220, RecvBytes: 33000, RecvPkts: 160},
@@ -143,10 +143,10 @@ func TestCollectorAccumulatorAndStaleRemoval(t *testing.T) {
 	assertFloat(t, mustCounter(t, mfs, "netrtmp_bytes_total", lblDir(destA, "received")), 34000, "bytes destA recv scrape2")
 	assertFloat(t, mustCounter(t, mfs, "netrtmp_bytes_total", lblDir(destB, "sent")), 600, "bytes destB sent scrape2")
 	assertFloat(t, mustGauge(t, mfs, "netrtmp_connections_active", lbl(destA)), 1, "active destA scrape2")
-	if _, ok := gaugeVal(mfs, "netrtmp_connection_bytes", lblConn(destA, 38212, "sent")); ok {
+	if _, ok := gaugeVal(mfs, "netrtmp_connection_bytes", lblConn(destA, 38212, "200", "sent")); ok {
 		t.Error("connection_bytes destA:38212 sent should have been removed (stale)")
 	}
-	if v, ok := gaugeVal(mfs, "netrtmp_connection_bytes", lblConn(destA, 38211, "sent")); !ok || v != 50000 {
+	if v, ok := gaugeVal(mfs, "netrtmp_connection_bytes", lblConn(destA, 38211, "100", "sent")); !ok || v != 50000 {
 		t.Errorf("connection_bytes destA:38211 sent = %v (ok=%v), want 50000", v, ok)
 	}
 }
@@ -163,7 +163,7 @@ func TestCollectorFlowResetHandlesUnderflow(t *testing.T) {
 	)
 	c := newFakeCollector(&ssConns, &flows, &ssErr, &flowErr)
 
-	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935}}
+	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, PID: "100"}}
 	flows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 100000, RecvBytes: 50000}}
 	runScrape(t, c)
 
@@ -277,7 +277,7 @@ func TestCollectorTCPInfoMode(t *testing.T) {
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) { return ssConns, ssErr }
 	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return flows, flowErr }
 
-	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935}}
+	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935, PID: "12345"}}
 	flows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935, SentBytes: 1000, RecvBytes: 500, SentPkts: 10, RecvPkts: 5}}
 	mfs := runScrape(t, c)
 
@@ -318,7 +318,7 @@ func TestCollectorAutoFallsBackToConntrack(t *testing.T) {
 	// with a fake so the test does not depend on the real conntrack binary.
 	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return flows, flowErr }
 
-	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935}}
+	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, PID: "100"}}
 	flows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 800, RecvBytes: 400}}
 	mfs := runScrape(t, c)
 
@@ -339,7 +339,7 @@ func TestCollectorAutoUsesTCPInfo(t *testing.T) {
 	probeFlows := []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935, SentBytes: 1234, RecvBytes: 567}}
 	c.tcpinfoList = func(context.Context, string, int) ([]flow.Flow, error) { return probeFlows, nil }
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) {
-		return []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935}}, ssErr
+		return []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935, PID: "12345"}}, ssErr
 	}
 
 	mfs := runScrape(t, c)
@@ -361,8 +361,8 @@ func lbl(dest string) map[string]string {
 func lblDir(dest, dir string) map[string]string {
 	return map[string]string{"dest_ip": dest, "dest_port": "1935", "direction": dir}
 }
-func lblConn(dest string, localPort int, dir string) map[string]string {
-	return map[string]string{"dest_ip": dest, "dest_port": "1935", "local_port": strconv.Itoa(localPort), "direction": dir}
+func lblConn(dest string, localPort int, pid, dir string) map[string]string {
+	return map[string]string{"dest_ip": dest, "dest_port": "1935", "local_port": strconv.Itoa(localPort), "pid": pid, "direction": dir}
 }
 
 func mustGauge(t *testing.T, mfs map[string]*dto.MetricFamily, name string, labels map[string]string) float64 {
@@ -388,7 +388,7 @@ func TestCollectorConstLabels(t *testing.T) {
 	constLabels := prometheus.Labels{"hostname": "host-1", "env": "prod"}
 	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceConntrack, constLabels)
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) {
-		return []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935}}, nil
+		return []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, PID: "100"}}, nil
 	}
 	f := []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 100, RecvBytes: 50}}
 	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return f, nil }
@@ -421,6 +421,7 @@ func TestCollectorConstLabels(t *testing.T) {
 		"dest_ip":    destA,
 		"dest_port":  "1935",
 		"local_port": "38211",
+		"pid":        "100",
 		"direction":  "sent",
 	}
 	if _, ok := gaugeVal(mfs, "netrtmp_connection_bytes", want); !ok {

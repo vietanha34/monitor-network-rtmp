@@ -27,15 +27,17 @@ var (
 // SourceName is the label value used for this byte source in metrics.
 const SourceName = "ss-tcpinfo"
 
-// List runs `ss -H -t -n -i state established` and returns one flow per
+// List runs `ss -H -t -n -i -p state established` and returns one flow per
 // established outbound connection whose peer port equals targetPort, with
-// byte/packet counters populated from TCP_INFO.
+// byte/packet counters populated from TCP_INFO. The -p flag requests process
+// info so the owning PID is captured on the connection line (root required
+// to see PIDs of sockets owned by other users).
 //
 // On kernels < 4.6, ss does not expose bytes_sent/bytes_received. If any
 // connection lines are present but none carry byte counters, List returns
 // an error so callers (e.g. auto mode) can fall back to conntrack.
 func List(ctx context.Context, ssPath string, targetPort int) ([]flow.Flow, error) {
-	cmd := exec.CommandContext(ctx, ssPath, "-H", "-t", "-n", "-i", "state", "established")
+	cmd := exec.CommandContext(ctx, ssPath, "-H", "-t", "-n", "-i", "-p", "state", "established")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

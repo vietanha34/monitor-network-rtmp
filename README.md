@@ -68,8 +68,8 @@ those.
 | `netrtmp_byte_source_up` | gauge | — | `1` if the byte-source scrape (conntrack or ss-tcpinfo) succeeded, else `0` |
 | `netrtmp_connections_active` | gauge | `dest_ip`, `dest_port` | Number of established outbound connections to the target port |
 | `netrtmp_bytes_total` | counter | `dest_ip`, `dest_port`, `direction` | Total bytes transferred (monotonic; `direction` = `sent` or `received`) |
-| `netrtmp_connection_bytes` | gauge | `dest_ip`, `dest_port`, `local_port`, `direction` | Current byte counter for a single open connection |
-| `netrtmp_connection_packets` | gauge | `dest_ip`, `dest_port`, `local_port`, `direction` | Current packet counter for a single open connection |
+| `netrtmp_connection_bytes` | gauge | `dest_ip`, `dest_port`, `local_port`, `pid`, `direction` | Current byte counter for a single open connection |
+| `netrtmp_connection_packets` | gauge | `dest_ip`, `dest_port`, `local_port`, `pid`, `direction` | Current packet counter for a single open connection |
 | `netrtmp_scrape_duration_seconds` | gauge | — | Duration of the last scrape |
 | `netrtmp_scrape_errors_total` | counter | `source` | Total scrape errors (`source` = `ss`, `conntrack`, or `ss-tcpinfo`) |
 
@@ -85,8 +85,8 @@ netrtmp_connections_active{dest_ip="93.184.216.34",dest_port="1935",env="prod",h
 netrtmp_bytes_total{dest_ip="93.184.216.34",dest_port="1935",direction="received",env="prod",hostname="rtmp-src-1"} 34000
 netrtmp_bytes_total{dest_ip="93.184.216.34",dest_port="1935",direction="sent",env="prod",hostname="rtmp-src-1"} 52000
 # HELP netrtmp_connection_bytes Current byte counter for an individual established connection ...
-netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="sent",env="prod",hostname="rtmp-src-1",local_port="38211"} 50000
-netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="received",env="prod",hostname="rtmp-src-1",local_port="38211"} 33000
+netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="sent",env="prod",hostname="rtmp-src-1",local_port="38211",pid="12345"} 50000
+netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="received",env="prod",hostname="rtmp-src-1",local_port="38211",pid="12345"} 33000
 ```
 
 ### Useful PromQL examples
@@ -103,6 +103,9 @@ sum by (hostname) (rate(netrtmp_bytes_total{direction="received"}[1m])) * 8
 
 # Per-destination outbound bitrate, broken down per host
 sum by (hostname, dest_ip) (rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
+
+# Outbound bitrate per process (pid) on a host
+sum by (hostname, pid) (rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
 
 # Total bitrate across all hosts and destinations
 sum(rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
@@ -391,7 +394,10 @@ not needed.
 - `netrtmp_connection_bytes` / `netrtmp_connection_packets` reflect the
   **current** byte/packet counter of an open connection (from whichever byte
   source is active) and disappear when the connection closes — use them for
-  per-stream insight, not for long-term totals.
+  per-stream insight, not for long-term totals. The `pid` label identifies the
+  owning process so you can track traffic across reconnections by the same
+  process; it is `"0"` when the exporter cannot see the PID (socket owned by
+  another user and exporter not running as root).
 - **ss-tcpinfo mode** requires kernel ≥ 4.6 (`bytes_sent`/`bytes_received` in
   `struct tcp_info`). If `netrtmp_bytes_total` stays at 0 while
   `netrtmp_byte_source_up` is 1, check that `ss -ti` prints `bytes_sent:`

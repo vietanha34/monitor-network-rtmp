@@ -89,6 +89,7 @@ type connLabel struct {
 	destIP    string
 	destPort  int
 	localPort int
+	pid       string
 }
 
 type aggKey struct {
@@ -151,13 +152,13 @@ func New(ssPath, conntrackPath string, targetPort int, scrapeTimeout time.Durati
 			Name:        "connection_bytes",
 			Help:        "Current byte counter for an individual established connection from the active byte source (resets when the connection closes).",
 			ConstLabels: constLabels,
-		}, []string{"dest_ip", "dest_port", "local_port", "direction"}),
+		}, []string{"dest_ip", "dest_port", "local_port", "pid", "direction"}),
 		connPackets: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace:   namespace,
 			Name:        "connection_packets",
 			Help:        "Current packet counter for an individual established connection from the active byte source.",
 			ConstLabels: constLabels,
-		}, []string{"dest_ip", "dest_port", "local_port", "direction"}),
+		}, []string{"dest_ip", "dest_port", "local_port", "pid", "direction"}),
 
 		lastRaw:        map[flowKey]uint64{},
 		lastDestLabels: map[destLabel]struct{}{},
@@ -311,15 +312,16 @@ func (c *Collector) runScrape(ctx context.Context, ch chan<- prometheus.Metric, 
 			continue
 		}
 
-		cl := connLabel{conn.DestIP, conn.DestPort, conn.LocalPort}
+		cl := connLabel{conn.DestIP, conn.DestPort, conn.LocalPort, conn.PID}
 		curConn[cl] = struct{}{}
 
 		dp := strconv.Itoa(conn.DestPort)
 		lp := strconv.Itoa(conn.LocalPort)
-		c.connBytes.WithLabelValues(conn.DestIP, dp, lp, "sent").Set(float64(f.SentBytes))
-		c.connBytes.WithLabelValues(conn.DestIP, dp, lp, "received").Set(float64(f.RecvBytes))
-		c.connPackets.WithLabelValues(conn.DestIP, dp, lp, "sent").Set(float64(f.SentPkts))
-		c.connPackets.WithLabelValues(conn.DestIP, dp, lp, "received").Set(float64(f.RecvPkts))
+		pid := conn.PID
+		c.connBytes.WithLabelValues(conn.DestIP, dp, lp, pid, "sent").Set(float64(f.SentBytes))
+		c.connBytes.WithLabelValues(conn.DestIP, dp, lp, pid, "received").Set(float64(f.RecvBytes))
+		c.connPackets.WithLabelValues(conn.DestIP, dp, lp, pid, "sent").Set(float64(f.SentPkts))
+		c.connPackets.WithLabelValues(conn.DestIP, dp, lp, pid, "received").Set(float64(f.RecvPkts))
 
 		// Compute monotonic deltas for the aggregate counter.
 		raws := [2]uint64{f.SentBytes, f.RecvBytes}
@@ -366,10 +368,11 @@ func (c *Collector) runScrape(ctx context.Context, ch chan<- prometheus.Metric, 
 		if _, ok := curConn[cl]; !ok {
 			dp := strconv.Itoa(cl.destPort)
 			lp := strconv.Itoa(cl.localPort)
-			c.connBytes.DeleteLabelValues(cl.destIP, dp, lp, "sent")
-			c.connBytes.DeleteLabelValues(cl.destIP, dp, lp, "received")
-			c.connPackets.DeleteLabelValues(cl.destIP, dp, lp, "sent")
-			c.connPackets.DeleteLabelValues(cl.destIP, dp, lp, "received")
+			pid := cl.pid
+			c.connBytes.DeleteLabelValues(cl.destIP, dp, lp, pid, "sent")
+			c.connBytes.DeleteLabelValues(cl.destIP, dp, lp, pid, "received")
+			c.connPackets.DeleteLabelValues(cl.destIP, dp, lp, pid, "sent")
+			c.connPackets.DeleteLabelValues(cl.destIP, dp, lp, pid, "received")
 		}
 	}
 	c.lastConnLabels = curConn
