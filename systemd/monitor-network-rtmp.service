@@ -18,9 +18,10 @@ Environment=RTMP_BYTE_SOURCE=auto
 # os.Hostname(); set custom labels here (comma-separated key=val pairs), e.g.
 # Environment=RTMP_LABELS=env=prod,region=ap-southeast-1
 Environment=RTMP_LABELS=
-# Ensure the conntrack kernel module is loaded before starting (only needed
-# when RTMP_BYTE_SOURCE=conntrack; auto/ss-tcpinfo do not require it).
-ExecStartPre=/sbin/modprobe nf_conntrack
+# Load the conntrack kernel module if available (only needed when
+# RTMP_BYTE_SOURCE=conntrack; auto/ss-tcpinfo do not require it). The leading
+# "-" makes this optional: if the module is missing, the service still starts.
+ExecStartPre=-/sbin/modprobe nf_conntrack
 ExecStart=/usr/local/bin/monitor-network-rtmp \
     --target-port=${RTMP_TARGET_PORT} \
     --listen-address=${RTMP_LISTEN_ADDRESS} \
