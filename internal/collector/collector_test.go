@@ -85,10 +85,10 @@ func assertFloat(t *testing.T, got, want float64, msg string) {
 // newFakeCollector returns a Collector in explicit conntrack mode whose ss and
 // byte-source functions are backed by the provided pointers, so tests can
 // mutate them between scrapes.
-func newFakeCollector(ssConns *[]ss.Connection, ctFlows *[]flow.Flow, ssErrp, ctErrp *error) *Collector {
+func newFakeCollector(ssConns *[]ss.Connection, flows *[]flow.Flow, ssErrp, flowErrp *error) *Collector {
 	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceConntrack)
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) { return *ssConns, *ssErrp }
-	c.ctList = func(context.Context, string, int) ([]flow.Flow, error) { return *ctFlows, *ctErrp }
+	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return *flows, *flowErrp }
 	return c
 }
 
@@ -99,11 +99,11 @@ func newFakeCollector(ssConns *[]ss.Connection, ctFlows *[]flow.Flow, ssErrp, ct
 func TestCollectorAccumulatorAndStaleRemoval(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error
-		ctErr   error
+		flowErr   error
 	)
-	c := newFakeCollector(&ssConns, &ctFlows, &ssErr, &ctErr)
+	c := newFakeCollector(&ssConns, &flows, &ssErr, &flowErr)
 
 	// --- Scrape 1: 2 conns to destA, 1 to destB ---
 	ssConns = []ss.Connection{
@@ -111,7 +111,7 @@ func TestCollectorAccumulatorAndStaleRemoval(t *testing.T) {
 		{LocalIP: "10.0.0.5", LocalPort: 38212, DestIP: destA, DestPort: 1935},
 		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935},
 	}
-	ctFlows = []flow.Flow{
+	flows = []flow.Flow{
 		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 24000, SentPkts: 120, RecvBytes: 16000, RecvPkts: 80},
 		{LocalIP: "10.0.0.5", LocalPort: 38212, DestIP: destA, DestPort: 1935, SentBytes: 2000, SentPkts: 10, RecvBytes: 1000, RecvPkts: 5},
 		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935, SentBytes: 600, SentPkts: 3, RecvBytes: 400, RecvPkts: 2},
@@ -132,7 +132,7 @@ func TestCollectorAccumulatorAndStaleRemoval(t *testing.T) {
 		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935},
 		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935},
 	}
-	ctFlows = []flow.Flow{
+	flows = []flow.Flow{
 		{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 50000, SentPkts: 220, RecvBytes: 33000, RecvPkts: 160},
 		{LocalIP: "10.0.0.5", LocalPort: 41983, DestIP: destB, DestPort: 1935, SentBytes: 600, SentPkts: 3, RecvBytes: 400, RecvPkts: 2},
 	}
@@ -157,17 +157,17 @@ func TestCollectorAccumulatorAndStaleRemoval(t *testing.T) {
 func TestCollectorFlowResetHandlesUnderflow(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error
-		ctErr   error
+		flowErr   error
 	)
-	c := newFakeCollector(&ssConns, &ctFlows, &ssErr, &ctErr)
+	c := newFakeCollector(&ssConns, &flows, &ssErr, &flowErr)
 
 	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935}}
-	ctFlows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 100000, RecvBytes: 50000}}
+	flows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 100000, RecvBytes: 50000}}
 	runScrape(t, c)
 
-	ctFlows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 500, RecvBytes: 200}}
+	flows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 500, RecvBytes: 200}}
 	mfs := runScrape(t, c)
 
 	assertFloat(t, mustCounter(t, mfs, "netrtmp_bytes_total", lblDir(destA, "sent")), 100500, "bytes after flow reset (sent)")
@@ -180,11 +180,11 @@ func TestCollectorFlowResetHandlesUnderflow(t *testing.T) {
 func TestCollectorEmptyTableKeepsByteSourceUp(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error
-		ctErr   error
+		flowErr   error
 	)
-	c := newFakeCollector(&ssConns, &ctFlows, &ssErr, &ctErr)
+	c := newFakeCollector(&ssConns, &flows, &ssErr, &flowErr)
 	mfs := runScrape(t, c)
 
 	if v, _ := gaugeVal(mfs, "netrtmp_up", nil); v != 1 {
@@ -204,11 +204,11 @@ func TestCollectorEmptyTableKeepsByteSourceUp(t *testing.T) {
 func TestCollectorSSError(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error = errors.New("ss boom")
-		ctErr   error
+		flowErr   error
 	)
-	c := newFakeCollector(&ssConns, &ctFlows, &ssErr, &ctErr)
+	c := newFakeCollector(&ssConns, &flows, &ssErr, &flowErr)
 	mfs := runScrape(t, c)
 
 	if v, _ := gaugeVal(mfs, "netrtmp_up", nil); v != 0 {
@@ -225,11 +225,11 @@ func TestCollectorSSError(t *testing.T) {
 func TestCollectorByteSourceError(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error
-		ctErr   error = errors.New("conntrack boom")
+		flowErr   error = errors.New("conntrack boom")
 	)
-	c := newFakeCollector(&ssConns, &ctFlows, &ssErr, &ctErr)
+	c := newFakeCollector(&ssConns, &flows, &ssErr, &flowErr)
 	mfs := runScrape(t, c)
 
 	if v, _ := gaugeVal(mfs, "netrtmp_up", nil); v != 1 {
@@ -248,11 +248,11 @@ func TestCollectorByteSourceError(t *testing.T) {
 func TestCollectorScrapeErrorsPreinitialized(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error
-		ctErr   error
+		flowErr   error
 	)
-	c := newFakeCollector(&ssConns, &ctFlows, &ssErr, &ctErr)
+	c := newFakeCollector(&ssConns, &flows, &ssErr, &flowErr)
 	mfs := runScrape(t, c)
 
 	for _, src := range []string{"ss", "conntrack", "ss-tcpinfo"} {
@@ -269,16 +269,16 @@ func TestCollectorScrapeErrorsPreinitialized(t *testing.T) {
 func TestCollectorTCPInfoMode(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error
-		ctErr   error
+		flowErr   error
 	)
 	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceTCPInfo)
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) { return ssConns, ssErr }
-	c.ctList = func(context.Context, string, int) ([]flow.Flow, error) { return ctFlows, ctErr }
+	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return flows, flowErr }
 
 	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935}}
-	ctFlows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935, SentBytes: 1000, RecvBytes: 500, SentPkts: 10, RecvPkts: 5}}
+	flows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935, SentBytes: 1000, RecvBytes: 500, SentPkts: 10, RecvPkts: 5}}
 	mfs := runScrape(t, c)
 
 	if v, _ := gaugeVal(mfs, "netrtmp_byte_source_up", nil); v != 1 {
@@ -288,7 +288,7 @@ func TestCollectorTCPInfoMode(t *testing.T) {
 	assertFloat(t, mustCounter(t, mfs, "netrtmp_bytes_total", lblDir("103.90.222.4", "received")), 500, "tcpinfo recv")
 
 	// Now inject an error and confirm it is labeled ss-tcpinfo.
-	ctErr = errors.New("ss -ti boom")
+	flowErr = errors.New("ss -ti boom")
 	mfs = runScrape(t, c)
 	if v, _ := gaugeVal(mfs, "netrtmp_byte_source_up", nil); v != 0 {
 		t.Errorf("byte_source_up = %v, want 0 on tcpinfo error", v)
@@ -304,9 +304,9 @@ func TestCollectorTCPInfoMode(t *testing.T) {
 func TestCollectorAutoFallsBackToConntrack(t *testing.T) {
 	var (
 		ssConns []ss.Connection
-		ctFlows []flow.Flow
+		flows []flow.Flow
 		ssErr   error
-		ctErr   error
+		flowErr   error
 	)
 	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceAuto)
 	// Make the tcpinfo probe fail (simulates an old kernel / unsupported).
@@ -314,12 +314,12 @@ func TestCollectorAutoFallsBackToConntrack(t *testing.T) {
 		return nil, errors.New("ss -ti does not expose TCP_INFO byte counters (kernel < 4.6?)")
 	}
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) { return ssConns, ssErr }
-	// ctList is conntrack.List by default for conntrack resolution; override
+	// flowList is conntrack.List by default for conntrack resolution; override
 	// with a fake so the test does not depend on the real conntrack binary.
-	c.ctList = func(context.Context, string, int) ([]flow.Flow, error) { return ctFlows, ctErr }
+	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return flows, flowErr }
 
 	ssConns = []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935}}
-	ctFlows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 800, RecvBytes: 400}}
+	flows = []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 800, RecvBytes: 400}}
 	mfs := runScrape(t, c)
 
 	if c.ResolvedSource() != config.ByteSourceConntrack {

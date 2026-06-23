@@ -6,6 +6,7 @@ package collector
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"sync"
 	"time"
@@ -34,11 +35,12 @@ type Collector struct {
 	// successful probe. Empty until resolved.
 	resolvedSource string
 
-	// ssList / ctList are the data sources. They default to the real commands
-	// but can be replaced in tests.
-	ssList       ssListFunc
-	ctList       ctListFunc
-	tcpinfoList  ctListFunc // used by the auto-mode probe; defaults to tcpinfo.List
+	// ssList / flowList are the data sources. They default to the real
+	// commands but can be replaced in tests. flowList returns byte counters
+	// from the active byte source (conntrack or tcpinfo).
+	ssList      ssListFunc
+	flowList    flowListFunc
+	tcpinfoList flowListFunc // used by the auto-mode probe; defaults to tcpinfo.List
 
 	up             prometheus.Gauge
 	byteSourceUp   prometheus.Gauge
@@ -62,7 +64,7 @@ type Collector struct {
 }
 
 type ssListFunc func(ctx context.Context, ssPath string, targetPort int) ([]ss.Connection, error)
-type ctListFunc func(ctx context.Context, ssPath string, targetPort int) ([]flow.Flow, error)
+type flowListFunc func(ctx context.Context, binPath string, targetPort int) ([]flow.Flow, error)
 
 type flowKey struct {
 	destIP    string
@@ -152,16 +154,16 @@ func New(ssPath, conntrackPath string, targetPort int, scrapeTimeout time.Durati
 		lastConnLabels: map[connLabel]struct{}{},
 	}
 
-	// Wire the byte source. For "auto", ctList defaults to conntrack.List as
-	// the fallback (used after the ss-tcpinfo probe fails in Collect); the
+	// Wire the byte source. For "auto", flowList defaults to conntrack.List
+	// as the fallback (used after the ss-tcpinfo probe fails in Collect); the
 	// probe itself uses c.tcpinfoList. For explicit modes, wire directly.
 	switch byteSource {
 	case config.ByteSourceConntrack:
-		c.ctList = conntrack.List
+		c.flowList = conntrack.List
 	case config.ByteSourceTCPInfo:
-		c.ctList = tcpinfo.List
+		c.flowList = tcpinfo.List
 	default: // auto or empty
-		c.ctList = conntrack.List
+		c.flowList = conntrack.List
 	}
 
 	// Pre-create the scrape_errors_total label sets so the series appear even
@@ -193,15 +195,15 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	defer cancel()
 
 	ssFn := c.ssList
-	var ctFn ctListFunc
+	var flowFn flowListFunc
 	var sourceLabel string
 
 	switch c.byteSource {
 	case config.ByteSourceConntrack:
-		ctFn = c.ctList
+		flowFn = c.flowList
 		sourceLabel = conntrack.SourceName
 	case config.ByteSourceTCPInfo:
-		ctFn = c.ctList
+		flowFn = c.flowList
 		sourceLabel = tcpinfo.SourceName
 	default: // auto
 		if c.resolvedSource == "" {
@@ -217,39 +219,42 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 				}, sourceLabel)
 				return
 			}
+			// One-time warning so the operator knows why auto mode is not using
+			// ss-tcpinfo (e.g. old kernel). Logged once, not every scrape.
+			log.Printf("byte source: ss-tcpinfo unavailable (%v); falling back to conntrack for this session", err)
 			c.resolvedSource = config.ByteSourceConntrack
 		}
 		if c.resolvedSource == config.ByteSourceTCPInfo {
-			ctFn = c.tcpinfoList
+			flowFn = c.tcpinfoList
 			sourceLabel = tcpinfo.SourceName
 		} else {
-			ctFn = c.ctList
+			flowFn = c.flowList
 			sourceLabel = conntrack.SourceName
 		}
 	}
 
-	c.runScrape(ctx, ch, start, ssFn, ctFn, sourceLabel)
+	c.runScrape(ctx, ch, start, ssFn, flowFn, sourceLabel)
 }
 
 // runScrape executes the ss and byte-source functions concurrently, then
 // computes and emits all metrics under c.mu.
-func (c *Collector) runScrape(ctx context.Context, ch chan<- prometheus.Metric, start time.Time, ssFn ssListFunc, ctFn ctListFunc, sourceLabel string) {
+func (c *Collector) runScrape(ctx context.Context, ch chan<- prometheus.Metric, start time.Time, ssFn ssListFunc, flowFn flowListFunc, sourceLabel string) {
 	var (
-		ssConns []ss.Connection
-		ctFlows []flow.Flow
-		ssErr   error
-		ctErr   error
-		wg      sync.WaitGroup
+		ssConns  []ss.Connection
+		flows    []flow.Flow
+		ssErr    error
+		flowErr  error
+		wg       sync.WaitGroup
 	)
 	wg.Add(2)
 	go func() { defer wg.Done(); ssConns, ssErr = ssFn(ctx, c.ssPath, c.targetPort) }()
-	// ctFn uses the ss binary for tcpinfo mode and the conntrack binary for
+	// flowFn uses the ss binary for tcpinfo mode and the conntrack binary for
 	// conntrack mode; pass the appropriate path.
-	ctPath := c.conntrackPath
+	binPath := c.conntrackPath
 	if sourceLabel == tcpinfo.SourceName {
-		ctPath = c.ssPath
+		binPath = c.ssPath
 	}
-	go func() { defer wg.Done(); ctFlows, ctErr = ctFn(ctx, ctPath, c.targetPort) }()
+	go func() { defer wg.Done(); flows, flowErr = flowFn(ctx, binPath, c.targetPort) }()
 	wg.Wait()
 
 	// Prometheus calls Collect single-threaded (one scrape at a time), so the
@@ -266,7 +271,7 @@ func (c *Collector) runScrape(ctx context.Context, ch chan<- prometheus.Metric, 
 	} else {
 		c.up.Set(1)
 	}
-	if ctErr != nil {
+	if flowErr != nil {
 		c.scrapeErrors.WithLabelValues(sourceLabel).Inc()
 		c.byteSourceUp.Set(0)
 	} else {
@@ -274,8 +279,8 @@ func (c *Collector) runScrape(ctx context.Context, ch chan<- prometheus.Metric, 
 	}
 
 	// Index byte-source flows by 4-tuple for O(1) lookup from ss connections.
-	flowMap := make(map[flowLookup]flow.Flow, len(ctFlows))
-	for _, f := range ctFlows {
+	flowMap := make(map[flowLookup]flow.Flow, len(flows))
+	for _, f := range flows {
 		flowMap[flowLookup{f.LocalIP, f.LocalPort, f.DestIP, f.DestPort}] = f
 	}
 
