@@ -98,7 +98,9 @@ type aggKey struct {
 }
 
 // New creates a new Collector. byteSource is one of config.ByteSource*.
-func New(ssPath, conntrackPath string, targetPort int, scrapeTimeout time.Duration, byteSource string) *Collector {
+// constLabels are constant labels (e.g. hostname, env) applied to every
+// exported metric series; pass nil for none.
+func New(ssPath, conntrackPath string, targetPort int, scrapeTimeout time.Duration, byteSource string, constLabels prometheus.Labels) *Collector {
 	c := &Collector{
 		ssPath:        ssPath,
 		conntrackPath: conntrackPath,
@@ -109,44 +111,52 @@ func New(ssPath, conntrackPath string, targetPort int, scrapeTimeout time.Durati
 		tcpinfoList:  tcpinfo.List,
 
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "up",
-			Help:      "1 if the ss connection scrape succeeded, 0 otherwise.",
+			Namespace:   namespace,
+			Name:        "up",
+			Help:        "1 if the ss connection scrape succeeded, 0 otherwise.",
+			ConstLabels: constLabels,
 		}),
 		byteSourceUp: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "byte_source_up",
-			Help:      "1 if the byte-source scrape (conntrack or ss-tcpinfo) succeeded, 0 otherwise.",
+			Namespace:   namespace,
+			Name:        "byte_source_up",
+			Help:        "1 if the byte-source scrape (conntrack or ss-tcpinfo) succeeded, 0 otherwise.",
+			ConstLabels: constLabels,
 		}),
 		scrapeDuration: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "scrape_duration_seconds",
-			Help:      "Duration of the last scrape in seconds.",
+			Namespace:   namespace,
+			Name:        "scrape_duration_seconds",
+			Help:        "Duration of the last scrape in seconds.",
+			ConstLabels: constLabels,
 		}),
 		scrapeErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "scrape_errors_total",
-			Help:      "Total number of scrape errors by source.",
+			Namespace:   namespace,
+			Name:        "scrape_errors_total",
+			Help:        "Total number of scrape errors by source.",
+			ConstLabels: constLabels,
 		}, []string{"source"}),
 		connActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "connections_active",
-			Help:      "Number of established outbound TCP connections to the target port.",
+			Namespace:   namespace,
+			Name:        "connections_active",
+			Help:        "Number of established outbound TCP connections to the target port.",
+			ConstLabels: constLabels,
 		}, []string{"dest_ip", "dest_port"}),
 		bytesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace,
-			Name:      "bytes_total",
-			Help:      "Total bytes transferred over established outbound connections to the target port (monotonic; survives per-flow resets).",
+			Namespace:   namespace,
+			Name:        "bytes_total",
+			Help:        "Total bytes transferred over established outbound connections to the target port (monotonic; survives per-flow resets).",
+			ConstLabels: constLabels,
 		}, []string{"dest_ip", "dest_port", "direction"}),
 		connBytes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "connection_bytes",
-			Help:      "Current byte counter for an individual established connection from the active byte source (resets when the connection closes).",
+			Namespace:   namespace,
+			Name:        "connection_bytes",
+			Help:        "Current byte counter for an individual established connection from the active byte source (resets when the connection closes).",
+			ConstLabels: constLabels,
 		}, []string{"dest_ip", "dest_port", "local_port", "direction"}),
 		connPackets: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "connection_packets",
-			Help:      "Current packet counter for an individual established connection from the active byte source.",
+			Namespace:   namespace,
+			Name:        "connection_packets",
+			Help:        "Current packet counter for an individual established connection from the active byte source.",
+			ConstLabels: constLabels,
 		}, []string{"dest_ip", "dest_port", "local_port", "direction"}),
 
 		lastRaw:        map[flowKey]uint64{},

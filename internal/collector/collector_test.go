@@ -86,7 +86,7 @@ func assertFloat(t *testing.T, got, want float64, msg string) {
 // byte-source functions are backed by the provided pointers, so tests can
 // mutate them between scrapes.
 func newFakeCollector(ssConns *[]ss.Connection, flows *[]flow.Flow, ssErrp, flowErrp *error) *Collector {
-	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceConntrack)
+	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceConntrack, nil)
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) { return *ssConns, *ssErrp }
 	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return *flows, *flowErrp }
 	return c
@@ -273,7 +273,7 @@ func TestCollectorTCPInfoMode(t *testing.T) {
 		ssErr   error
 		flowErr   error
 	)
-	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceTCPInfo)
+	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceTCPInfo, nil)
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) { return ssConns, ssErr }
 	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return flows, flowErr }
 
@@ -308,7 +308,7 @@ func TestCollectorAutoFallsBackToConntrack(t *testing.T) {
 		ssErr   error
 		flowErr   error
 	)
-	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceAuto)
+	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceAuto, nil)
 	// Make the tcpinfo probe fail (simulates an old kernel / unsupported).
 	c.tcpinfoList = func(context.Context, string, int) ([]flow.Flow, error) {
 		return nil, errors.New("ss -ti does not expose TCP_INFO byte counters (kernel < 4.6?)")
@@ -335,7 +335,7 @@ func TestCollectorAutoFallsBackToConntrack(t *testing.T) {
 // probe succeeds, locks in ss-tcpinfo and uses its results.
 func TestCollectorAutoUsesTCPInfo(t *testing.T) {
 	var ssErr error
-	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceAuto)
+	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceAuto, nil)
 	probeFlows := []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 44802, DestIP: "103.90.222.4", DestPort: 1935, SentBytes: 1234, RecvBytes: 567}}
 	c.tcpinfoList = func(context.Context, string, int) ([]flow.Flow, error) { return probeFlows, nil }
 	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) {
@@ -380,4 +380,50 @@ func mustCounter(t *testing.T, mfs map[string]*dto.MetricFamily, name string, la
 		t.Fatalf("counter %s %v not found", name, labels)
 	}
 	return v
+}
+
+// TestCollectorConstLabels verifies that constant labels (hostname, env, ...)
+// passed to New are attached to every exported metric series.
+func TestCollectorConstLabels(t *testing.T) {
+	constLabels := prometheus.Labels{"hostname": "host-1", "env": "prod"}
+	c := New("ss", "conntrack", 1935, 5*time.Second, config.ByteSourceConntrack, constLabels)
+	c.ssList = func(context.Context, string, int) ([]ss.Connection, error) {
+		return []ss.Connection{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935}}, nil
+	}
+	f := []flow.Flow{{LocalIP: "10.0.0.5", LocalPort: 38211, DestIP: destA, DestPort: 1935, SentBytes: 100, RecvBytes: 50}}
+	c.flowList = func(context.Context, string, int) ([]flow.Flow, error) { return f, nil }
+
+	mfs := runScrape(t, c)
+
+	// Every series across all metric families must carry the const labels.
+	for name, mf := range mfs {
+		if len(mf.GetMetric()) == 0 {
+			continue
+		}
+		for i, m := range mf.GetMetric() {
+			have := map[string]string{}
+			for _, lp := range m.GetLabel() {
+				have[lp.GetName()] = lp.GetValue()
+			}
+			if have["hostname"] != "host-1" {
+				t.Errorf("%s[%d]: missing/wrong hostname label: %v", name, i, have)
+			}
+			if have["env"] != "prod" {
+				t.Errorf("%s[%d]: missing/wrong env label: %v", name, i, have)
+			}
+		}
+	}
+
+	// Sanity: a per-connection series still has the variable labels too.
+	want := map[string]string{
+		"hostname":   "host-1",
+		"env":        "prod",
+		"dest_ip":    destA,
+		"dest_port":  "1935",
+		"local_port": "38211",
+		"direction":  "sent",
+	}
+	if _, ok := gaugeVal(mfs, "netrtmp_connection_bytes", want); !ok {
+		t.Errorf("connection_bytes with const+variable labels not found (want %v)", want)
+	}
 }

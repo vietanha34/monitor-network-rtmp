@@ -26,7 +26,7 @@ func main() {
 	}
 
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(collector.New(cfg.SsPath, cfg.ConntrackPath, cfg.TargetPort, cfg.ScrapeTimeout, cfg.ByteSource))
+	reg.MustRegister(collector.New(cfg.SsPath, cfg.ConntrackPath, cfg.TargetPort, cfg.ScrapeTimeout, cfg.ByteSource, prometheus.Labels(cfg.Labels)))
 
 	mux := http.NewServeMux()
 	mux.Handle(cfg.MetricsPath, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
@@ -38,8 +38,8 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 
-	log.Printf("monitor-network-rtmp %s starting: listen=%s metrics=%s target_port=%d byte_source=%s",
-		version, cfg.ListenAddress, cfg.MetricsPath, cfg.TargetPort, cfg.ByteSource)
+	log.Printf("monitor-network-rtmp %s starting: listen=%s metrics=%s target_port=%d byte_source=%s labels=%v",
+		version, cfg.ListenAddress, cfg.MetricsPath, cfg.TargetPort, cfg.ByteSource, cfg.Labels)
 
 	srv := &http.Server{Addr: cfg.ListenAddress, Handler: mux}
 	if err := srv.ListenAndServe(); err != nil {

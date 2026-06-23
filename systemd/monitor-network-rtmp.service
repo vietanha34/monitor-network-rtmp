@@ -14,6 +14,10 @@ Environment=RTMP_TARGET_PORT=1935
 Environment=RTMP_LISTEN_ADDRESS=:9101
 Environment=RTMP_METRICS_PATH=/metrics
 Environment=RTMP_BYTE_SOURCE=auto
+# Constant labels attached to every metric series. hostname is auto-added from
+# os.Hostname(); set custom labels here (comma-separated key=val pairs), e.g.
+# Environment=RTMP_LABELS=env=prod,region=ap-southeast-1
+Environment=RTMP_LABELS=
 # Ensure the conntrack kernel module is loaded before starting (only needed
 # when RTMP_BYTE_SOURCE=conntrack; auto/ss-tcpinfo do not require it).
 ExecStartPre=/sbin/modprobe nf_conntrack

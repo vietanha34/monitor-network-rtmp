@@ -57,6 +57,11 @@ counter resets.
 
 ## Metrics
 
+Every metric series carries the **constant labels** from `--label` / `RTMP_LABELS`
+(see [Multi-server deployment](#multi-server-deployment-labels)), including the
+auto-added `hostname` label. The variable labels listed below are in addition to
+those.
+
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `netrtmp_up` | gauge | — | `1` if the `ss` connection scrape succeeded, else `0` |
@@ -75,32 +80,35 @@ closes (cardinality stays bounded to currently-open connections).
 
 ```
 # HELP netrtmp_connections_active Number of established outbound TCP connections to the target port.
-netrtmp_connections_active{dest_ip="93.184.216.34",dest_port="1935"} 2
+netrtmp_connections_active{dest_ip="93.184.216.34",dest_port="1935",env="prod",hostname="rtmp-src-1"} 2
 # HELP netrtmp_bytes_total Total bytes transferred over established outbound connections ...
-netrtmp_bytes_total{dest_ip="93.184.216.34",dest_port="1935",direction="received"} 34000
-netrtmp_bytes_total{dest_ip="93.184.216.34",dest_port="1935",direction="sent"} 52000
-# HELP netrtmp_connection_bytes Current conntrack byte counter for an individual established connection ...
-netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="sent",local_port="38211"} 50000
-netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="received",local_port="38211"} 33000
+netrtmp_bytes_total{dest_ip="93.184.216.34",dest_port="1935",direction="received",env="prod",hostname="rtmp-src-1"} 34000
+netrtmp_bytes_total{dest_ip="93.184.216.34",dest_port="1935",direction="sent",env="prod",hostname="rtmp-src-1"} 52000
+# HELP netrtmp_connection_bytes Current byte counter for an individual established connection ...
+netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="sent",env="prod",hostname="rtmp-src-1",local_port="38211"} 50000
+netrtmp_connection_bytes{dest_ip="93.184.216.34",dest_port="1935",direction="received",env="prod",hostname="rtmp-src-1",local_port="38211"} 33000
 ```
 
 ### Useful PromQL examples
 
 ```promql
-# Current number of outbound RTMP connections
+# Total outbound RTMP connections across all hosts
 sum(netrtmp_connections_active)
 
-# Outbound bitrate (bytes/s) to the RTMP port
+# Outbound bitrate per host (bytes/s)
+sum by (hostname) (rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
+
+# Inbound bitrate per host
+sum by (hostname) (rate(netrtmp_bytes_total{direction="received"}[1m])) * 8
+
+# Per-destination outbound bitrate, broken down per host
+sum by (hostname, dest_ip) (rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
+
+# Total bitrate across all hosts and destinations
 sum(rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
 
-# Inbound bitrate (bytes/s)
-sum(rate(netrtmp_bytes_total{direction="received"}[1m])) * 8
-
-# Per-destination outbound bitrate
-sum by (dest_ip) (rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
-
-# Number of distinct RTMP destinations currently connected
-count(netrtmp_connections_active)
+# Number of distinct RTMP destinations currently connected (per host)
+count by (hostname) (netrtmp_connections_active)
 ```
 
 ---
@@ -190,6 +198,7 @@ All options are CLI flags with matching environment variables:
 | `--listen-address` | `RTMP_LISTEN_ADDRESS` | `:9101` | HTTP listen address |
 | `--metrics-path` | `RTMP_METRICS_PATH` | `/metrics` | Path under which metrics are exposed |
 | `--byte-source` | `RTMP_BYTE_SOURCE` | `auto` | Byte-counter source: `auto` \| `conntrack` \| `ss-tcpinfo` |
+| `--label` (repeatable) | `RTMP_LABELS` | `hostname=<auto>` | Custom constant labels on every metric (e.g. `--label env=prod`). `RTMP_LABELS=key1=val1,key2=val2`. The `hostname` label is auto-added from `os.Hostname()` unless you override it. |
 | `--ss-path` | `RTMP_SS_PATH` | `ss` | Path to the `ss` binary |
 | `--conntrack-path` | `RTMP_CONNTRACK_PATH` | `conntrack` | Path to the `conntrack` binary (only used when byte-source=conntrack) |
 | `--scrape-timeout` | `RTMP_SCRAPE_TIMEOUT` | `5s` | Timeout for a single scrape |
@@ -203,8 +212,14 @@ Examples:
 # No conntrack installed — use ss TCP_INFO (kernel >= 4.6)
 ./monitor-network-rtmp --byte-source ss-tcpinfo
 
+# Add custom labels (hostname is auto-added; env/region are custom)
+./monitor-network-rtmp --label env=prod --label region=ap-southeast-1
+
+# Override the auto-detected hostname
+./monitor-network-rtmp --label hostname=rtmp-src-01
+
 # Via env (useful for systemd / containers)
-RTMP_TARGET_PORT=1935 RTMP_BYTE_SOURCE=auto ./monitor-network-rtmp
+RTMP_TARGET_PORT=1935 RTMP_LABELS=env=prod,region=ap ./monitor-network-rtmp
 ```
 
 To change the port in systemd, edit the `Environment=` lines in the unit file
@@ -216,7 +231,50 @@ sudo systemctl edit monitor-network-rtmp
 [Service]
 Environment=RTMP_TARGET_PORT=1935
 Environment=RTMP_LISTEN_ADDRESS=:9101
+Environment=RTMP_LABELS=env=prod,region=ap-southeast-1
 ```
+
+---
+
+## Multi-server deployment (labels)
+
+When running the exporter on many hosts, attach constant labels so Prometheus
+can tell series apart. The exporter **auto-adds a `hostname` label** (from
+`os.Hostname()`) to every metric, so even with zero configuration each host's
+series are distinguishable. Add more labels with `--label` (repeatable) or
+`RTMP_LABELS` (comma-separated):
+
+```bash
+# Per-host systemd override (sudo systemctl edit monitor-network-rtmp)
+[Service]
+Environment=RTMP_LABELS=env=prod,region=ap-southeast-1,dc=hcm1
+```
+
+```bash
+# CLI
+./monitor-network-rtmp --label env=prod --label region=ap-southeast-1 --label dc=hcm1
+```
+
+Every exported series then carries the labels, e.g.:
+
+```
+netrtmp_bytes_total{dest_ip="103.90.222.4",dest_port="1935",direction="sent",env="prod",hostname="rtmp-src-1",region="ap-southeast-1",dc="hcm1"} 1.8048910687e+10
+```
+
+Then aggregate across hosts in PromQL:
+
+```promql
+# Outbound bitrate per host
+sum by (hostname) (rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
+
+# Outbound bitrate per region (across all hosts in that region)
+sum by (region) (rate(netrtmp_bytes_total{direction="sent"}[1m])) * 8
+```
+
+> **Tip:** You can also use Prometheus `static_configs` `labels:` to add labels
+> at scrape time, but exporter-side `--label` is preferable when the label
+> value is a property of the host itself (so it's consistent regardless of which
+> Prometheus scrapes it, and shows up in `curl localhost:9101/metrics`).
 
 ---
 
