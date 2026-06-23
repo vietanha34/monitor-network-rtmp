@@ -25,14 +25,19 @@ type Collector struct {
 	targetPort    int
 	scrapeTimeout time.Duration
 
-	up            prometheus.Gauge
-	conntrackUp   prometheus.Gauge
+	// ssList / ctList are the data sources. They default to the real ss and
+	// conntrack commands but can be replaced in tests.
+	ssList ssListFunc
+	ctList ctListFunc
+
+	up             prometheus.Gauge
+	conntrackUp    prometheus.Gauge
 	scrapeDuration prometheus.Gauge
-	scrapeErrors  *prometheus.CounterVec
-	connActive    *prometheus.GaugeVec
-	bytesTotal    *prometheus.CounterVec
-	connBytes     *prometheus.GaugeVec
-	connPackets   *prometheus.GaugeVec
+	scrapeErrors   *prometheus.CounterVec
+	connActive     *prometheus.GaugeVec
+	bytesTotal     *prometheus.CounterVec
+	connBytes      *prometheus.GaugeVec
+	connPackets    *prometheus.GaugeVec
 
 	mu sync.Mutex
 
@@ -44,6 +49,9 @@ type Collector struct {
 	lastDestLabels map[destLabel]struct{}
 	lastConnLabels map[connLabel]struct{}
 }
+
+type ssListFunc func(ctx context.Context, ssPath string, targetPort int) ([]ss.Connection, error)
+type ctListFunc func(ctx context.Context, conntrackPath string, targetPort int) ([]conntrack.Flow, error)
 
 type flowKey struct {
 	destIP    string
@@ -78,11 +86,13 @@ type aggKey struct {
 
 // New creates a new Collector.
 func New(ssPath, conntrackPath string, targetPort int, scrapeTimeout time.Duration) *Collector {
-	return &Collector{
+	c := &Collector{
 		ssPath:        ssPath,
 		conntrackPath: conntrackPath,
 		targetPort:    targetPort,
 		scrapeTimeout: scrapeTimeout,
+		ssList:        ss.List,
+		ctList:        conntrack.List,
 
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
@@ -129,6 +139,11 @@ func New(ssPath, conntrackPath string, targetPort int, scrapeTimeout time.Durati
 		lastDestLabels: map[destLabel]struct{}{},
 		lastConnLabels: map[connLabel]struct{}{},
 	}
+	// Pre-create the scrape_errors_total label sets so the series appear even
+	// on a healthy host that has never had a scrape error.
+	c.scrapeErrors.WithLabelValues("ss").Add(0)
+	c.scrapeErrors.WithLabelValues("conntrack").Add(0)
+	return c
 }
 
 // Describe implements prometheus.Collector.
@@ -158,10 +173,14 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		wg      sync.WaitGroup
 	)
 	wg.Add(2)
-	go func() { defer wg.Done(); ssConns, ssErr = ss.List(ctx, c.ssPath, c.targetPort) }()
-	go func() { defer wg.Done(); ctFlows, ctErr = conntrack.List(ctx, c.conntrackPath, c.targetPort) }()
+	go func() { defer wg.Done(); ssConns, ssErr = c.ssList(ctx, c.ssPath, c.targetPort) }()
+	go func() { defer wg.Done(); ctFlows, ctErr = c.ctList(ctx, c.conntrackPath, c.targetPort) }()
 	wg.Wait()
 
+	// Prometheus calls Collect single-threaded (one scrape at a time), so the
+	// wide scope of c.mu is intentional: it guards the accumulator + stale-
+	// label bookkeeping across the whole post-scrape computation. We keep it
+	// for safety in case the collector is ever shared across registries.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

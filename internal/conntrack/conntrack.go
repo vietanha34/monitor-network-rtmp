@@ -5,6 +5,7 @@ package conntrack
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -41,9 +42,29 @@ func List(ctx context.Context, conntrackPath string, targetPort int) ([]Flow, er
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		// Some conntrack versions exit non-zero (e.g. code 1) when no flows
+		// match the filter, but still print the informational
+		// "N flow entries have been shown." line to stderr. That is an empty
+		// table, NOT a failure — treat it as such so netrtmp_conntrack_up stays
+		// 1 on a host with no RTMP connections. A missing binary or a real
+		// error (permission denied, module not loaded) is surfaced separately:
+		// a missing binary is not an *exec.ExitError, and real errors print an
+		// error message to stderr rather than the informational line.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			stderrStr := strings.TrimSpace(stderr.String())
+			if len(out) == 0 && (stderrStr == "" || strings.Contains(stderrStr, "have been shown")) {
+				return nil, nil
+			}
+		}
 		return nil, fmt.Errorf("run conntrack: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
+	return parseLines(out, targetPort), nil
+}
 
+// parseLines parses raw `conntrack -L` output and returns flows whose
+// original-direction dport equals targetPort. Extracted for unit testing.
+func parseLines(out []byte, targetPort int) []Flow {
 	var flows []Flow
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -56,7 +77,7 @@ func List(ctx context.Context, conntrackPath string, targetPort int) ([]Flow, er
 		}
 		flows = append(flows, f)
 	}
-	return flows, nil
+	return flows
 }
 
 func parseLine(line []byte, targetPort int) (Flow, bool) {

@@ -3,11 +3,15 @@ PKG      := github.com/vietanha34/monitor-network-rtmp
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: vet build build-linux clean run
+.PHONY: vet test build build-linux clean run
 
 ## Run static analysis.
 vet:
 	go vet ./...
+
+## Run unit tests.
+test:
+	go test ./...
 
 ## Build the exporter for the current host.
 build:

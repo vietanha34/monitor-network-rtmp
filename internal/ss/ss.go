@@ -29,7 +29,12 @@ func List(ctx context.Context, ssPath string, targetPort int) ([]Connection, err
 	if err != nil {
 		return nil, fmt.Errorf("run ss: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
+	return parseLines(out, targetPort), nil
+}
 
+// parseLines parses raw `ss` output and returns connections whose peer
+// (destination) port equals targetPort. Extracted for unit testing.
+func parseLines(out []byte, targetPort int) []Connection {
 	var conns []Connection
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -56,7 +61,7 @@ func List(ctx context.Context, ssPath string, targetPort int) ([]Connection, err
 			DestPort:  destPort,
 		})
 	}
-	return conns, nil
+	return conns
 }
 
 // splitAddrPort splits "ip:port" or "[ipv6]:port" into its parts.
