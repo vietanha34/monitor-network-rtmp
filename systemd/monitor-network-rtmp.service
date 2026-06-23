@@ -1,0 +1,30 @@
+[Unit]
+Description=Monitor Network RTMP Prometheus Exporter
+Documentation=https://github.com/vietanha34/monitor-network-rtmp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# conntrack needs root to read the connection tracking table.
+User=root
+Group=root
+# Override target port / listen address via CLI flags or env (RTMP_TARGET_PORT, RTMP_LISTEN_ADDRESS).
+Environment=RTMP_TARGET_PORT=1935
+Environment=RTMP_LISTEN_ADDRESS=:9101
+Environment=RTMP_METRICS_PATH=/metrics
+# Ensure the conntrack kernel module is loaded before starting.
+ExecStartPre=/sbin/modprobe nf_conntrack
+ExecStart=/usr/local/bin/monitor-network-rtmp \
+    --target-port=${RTMP_TARGET_PORT} \
+    --listen-address=${RTMP_LISTEN_ADDRESS} \
+    --metrics-path=${RTMP_METRICS_PATH}
+Restart=on-failure
+RestartSec=5
+# Minimal hardening.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

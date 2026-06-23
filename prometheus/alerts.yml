@@ -1,0 +1,59 @@
+# Example Prometheus alerting rules for monitor-network-rtmp.
+# Load in Prometheus with: rule_files: - "alerts.yml"
+groups:
+  - name: net-rtmp
+    interval: 30s
+    rules:
+      - alert: NetRTMPExporterDown
+        expr: netrtmp_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RTMP exporter down on {{ $labels.instance }}"
+          description: "The ss-based scrape has been failing for 2 minutes."
+
+      - alert: NetRTMPConntrackUnavailable
+        expr: netrtmp_conntrack_up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "conntrack unavailable on {{ $labels.instance }}"
+          description: "conntrack command is failing; byte counters will not update. Check conntrack-tools and the nf_conntrack module."
+
+      - alert: NetRTMPNoConnections
+        expr: sum by (instance) (netrtmp_connections_active) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No RTMP connections on {{ $labels.instance }}"
+          description: "No established outbound connections to port {{ $labels.dest_port | default 1935 }} for 10 minutes."
+
+      - alert: NetRTMPNoOutboundTraffic
+        expr: sum by (instance) (rate(netrtmp_bytes_total{direction="sent"}[5m])) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No outbound RTMP traffic on {{ $labels.instance }}"
+          description: "No bytes sent to the RTMP target port for 10 minutes."
+
+      - alert: NetRTMPNoInboundTraffic
+        expr: sum by (instance) (rate(netrtmp_bytes_total{direction="received"}[5m])) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No inbound RTMP traffic on {{ $labels.instance }}"
+          description: "No bytes received from the RTMP target port for 10 minutes."
+
+      - alert: NetRTMPScrapeErrors
+        expr: increase(netrtmp_scrape_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RTMP exporter scrape errors on {{ $labels.instance }}"
+          description: "Scrape errors (source={{ $labels.source }}) in the last 5 minutes."

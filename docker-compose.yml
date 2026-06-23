@@ -1,0 +1,19 @@
+# Run monitor-network-rtmp in Docker with host networking.
+# Requires Docker to support --network=host (Linux only).
+# conntrack needs NET_ADMIN + NET_RAW capabilities.
+services:
+  monitor-network-rtmp:
+    build: .
+    image: monitor-network-rtmp:latest
+    container_name: monitor-network-rtmp
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+    environment:
+      RTMP_TARGET_PORT: "1935"
+      RTMP_LISTEN_ADDRESS: ":9101"
+      RTMP_METRICS_PATH: "/metrics"
+    # If you prefer command-line flags over env:
+    # command: ["--target-port", "1935", "--listen-address", ":9101"]

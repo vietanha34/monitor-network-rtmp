@@ -1,0 +1,12 @@
+# Example Prometheus scrape config for monitor-network-rtmp.
+# Replace <ubuntu-host> with the IP/hostname of the monitored Ubuntu server.
+scrape_configs:
+  - job_name: "net-rtmp"
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "<ubuntu-host>:9101"
+        labels:
+          role: rtmp-source
