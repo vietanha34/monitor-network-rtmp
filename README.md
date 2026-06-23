@@ -188,6 +188,60 @@ curl http://localhost:9101/metrics | grep netrtmp_
 
 ---
 
+## Upgrade guide
+
+### v0.2.0 -> v0.2.1 (add constant labels)
+
+v0.2.1 is a **drop-in replacement** — same metrics, same CLI flags, no breaking
+changes. The only new feature is constant labels (`hostname` auto-added + custom
+`--label` / `RTMP_LABELS`). Steps:
+
+```bash
+# 1. Download the new binary (on each Ubuntu host, or copy from build machine)
+wget https://github.com/vietanha34/monitor-network-rtmp/releases/download/v0.2.1/monitor-network-rtmp-linux-amd64
+wget https://github.com/vietanha34/monitor-network-rtmp/releases/download/v0.2.1/checksums.txt
+sha256sum -c checksums.txt --ignore-missing
+
+# 2. Stop the service
+sudo systemctl stop monitor-network-rtmp
+
+# 3. Replace the binary
+sudo install -m 0755 monitor-network-rtmp-linux-amd64 /usr/local/bin/monitor-network-rtmp
+
+# 4. (Optional) add custom labels via systemd override — does NOT edit the unit file
+sudo systemctl edit monitor-network-rtmp
+#   In the editor, add:
+#   [Service]
+#   Environment=RTMP_LABELS=env=prod,region=ap-southeast-1
+
+# 5. Restart and verify
+sudo systemctl start monitor-network-rtmp
+sudo systemctl status monitor-network-rtmp
+
+# 6. Confirm the new version + labels appear
+curl -s http://localhost:9101/metrics | grep -E 'netrtmp_up\{'
+# Expect: netrtmp_up{hostname="<this-host>",...} 1
+```
+
+> **No labels needed?** Skip step 4 — the `hostname` label is auto-added even
+> with zero config, so existing dashboards keep working and you can already
+> tell hosts apart by `hostname`.
+
+> **Dashboards/alerts:** no changes required. v0.2.1 adds labels to existing
+> series (same metric names), so PromQL like
+> `sum(rate(netrtmp_bytes_total{direction="sent"}[1m]))` still works — you can
+> now also break it down with `sum by (hostname) (...)`.
+
+### v0.1.0 -> v0.2.0 (ss-tcpinfo + metric rename)
+
+If you're on v0.1.0, note the **breaking change** in v0.2.0:
+`netrtmp_conntrack_up` was renamed to **`netrtmp_byte_source_up`**. Update any
+dashboards/alerts that reference the old name. Then follow the same
+download/replace/restart steps above with the v0.2.1 binary (v0.2.1 includes
+all v0.2.0 changes).
+
+---
+
 ## Configuration
 
 All options are CLI flags with matching environment variables:
