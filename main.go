@@ -21,8 +21,12 @@ var version = "dev"
 func main() {
 	cfg := config.Load()
 
+	if !config.ValidByteSource(cfg.ByteSource) {
+		log.Fatalf("invalid --byte-source %q: must be auto, conntrack, or ss-tcpinfo", cfg.ByteSource)
+	}
+
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(collector.New(cfg.SsPath, cfg.ConntrackPath, cfg.TargetPort, cfg.ScrapeTimeout))
+	reg.MustRegister(collector.New(cfg.SsPath, cfg.ConntrackPath, cfg.TargetPort, cfg.ScrapeTimeout, cfg.ByteSource))
 
 	mux := http.NewServeMux()
 	mux.Handle(cfg.MetricsPath, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
@@ -34,8 +38,8 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 
-	log.Printf("monitor-network-rtmp %s starting: listen=%s metrics=%s target_port=%d",
-		version, cfg.ListenAddress, cfg.MetricsPath, cfg.TargetPort)
+	log.Printf("monitor-network-rtmp %s starting: listen=%s metrics=%s target_port=%d byte_source=%s",
+		version, cfg.ListenAddress, cfg.MetricsPath, cfg.TargetPort, cfg.ByteSource)
 
 	srv := &http.Server{Addr: cfg.ListenAddress, Handler: mux}
 	if err := srv.ListenAndServe(); err != nil {

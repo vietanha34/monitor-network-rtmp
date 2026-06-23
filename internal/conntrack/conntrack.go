@@ -11,19 +11,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/vietanha34/monitor-network-rtmp/internal/flow"
 )
 
-// Flow is a single conntrack flow (original direction = outbound).
-type Flow struct {
-	LocalIP    string
-	LocalPort  int
-	DestIP     string
-	DestPort   int
-	SentBytes  uint64
-	SentPkts   uint64
-	RecvBytes  uint64
-	RecvPkts   uint64
-}
+// SourceName is the label value used for this byte source in metrics.
+const SourceName = "conntrack"
 
 var (
 	// Matches "src=A dst=B sport=N dport=M". Two occurrences per line:
@@ -35,7 +28,7 @@ var (
 
 // List runs `conntrack -L -p tcp --dport <targetPort>` and returns flows
 // whose original-direction dport equals targetPort.
-func List(ctx context.Context, conntrackPath string, targetPort int) ([]Flow, error) {
+func List(ctx context.Context, conntrackPath string, targetPort int) ([]flow.Flow, error) {
 	cmd := exec.CommandContext(ctx, conntrackPath,
 		"-L", "-p", "tcp", "--dport", strconv.Itoa(targetPort))
 	var stderr bytes.Buffer
@@ -45,11 +38,12 @@ func List(ctx context.Context, conntrackPath string, targetPort int) ([]Flow, er
 		// Some conntrack versions exit non-zero (e.g. code 1) when no flows
 		// match the filter, but still print the informational
 		// "N flow entries have been shown." line to stderr. That is an empty
-		// table, NOT a failure — treat it as such so netrtmp_conntrack_up stays
-		// 1 on a host with no RTMP connections. A missing binary or a real
-		// error (permission denied, module not loaded) is surfaced separately:
-		// a missing binary is not an *exec.ExitError, and real errors print an
-		// error message to stderr rather than the informational line.
+		// table, NOT a failure — treat it as such so netrtmp_byte_source_up
+		// stays 1 on a host with no RTMP connections. A missing binary or a
+		// real error (permission denied, module not loaded) is surfaced
+		// separately: a missing binary is not an *exec.ExitError, and real
+		// errors print an error message to stderr rather than the
+		// informational line.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			stderrStr := strings.TrimSpace(stderr.String())
@@ -64,8 +58,8 @@ func List(ctx context.Context, conntrackPath string, targetPort int) ([]Flow, er
 
 // parseLines parses raw `conntrack -L` output and returns flows whose
 // original-direction dport equals targetPort. Extracted for unit testing.
-func parseLines(out []byte, targetPort int) []Flow {
-	var flows []Flow
+func parseLines(out []byte, targetPort int) []flow.Flow {
+	var flows []flow.Flow
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
@@ -80,20 +74,20 @@ func parseLines(out []byte, targetPort int) []Flow {
 	return flows
 }
 
-func parseLine(line []byte, targetPort int) (Flow, bool) {
+func parseLine(line []byte, targetPort int) (flow.Flow, bool) {
 	tuples := tupleRe.FindAllSubmatch(line, -1)
 	if len(tuples) < 2 {
-		return Flow{}, false
+		return flow.Flow{}, false
 	}
 	orig := tuples[0] // original (outbound) tuple
 
 	localPort, _ := strconv.Atoi(string(orig[3]))
 	destPort, _ := strconv.Atoi(string(orig[4]))
 	if destPort != targetPort {
-		return Flow{}, false
+		return flow.Flow{}, false
 	}
 
-	f := Flow{
+	f := flow.Flow{
 		LocalIP:   string(orig[1]),
 		LocalPort: localPort,
 		DestIP:    string(orig[2]),

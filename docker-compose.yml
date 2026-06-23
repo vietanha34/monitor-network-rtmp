@@ -15,5 +15,6 @@ services:
       RTMP_TARGET_PORT: "1935"
       RTMP_LISTEN_ADDRESS: ":9101"
       RTMP_METRICS_PATH: "/metrics"
+      RTMP_BYTE_SOURCE: "auto"
     # If you prefer command-line flags over env:
     # command: ["--target-port", "1935", "--listen-address", ":9101"]

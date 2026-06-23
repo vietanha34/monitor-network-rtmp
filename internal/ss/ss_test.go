@@ -19,9 +19,9 @@ func TestSplitAddrPort(t *testing.T) {
 		{"[badipv6:443", "", 0, false},
 	}
 	for _, tc := range cases {
-		ip, port, ok := splitAddrPort(tc.in)
+		ip, port, ok := SplitAddrPort(tc.in)
 		if ip != tc.ip || port != tc.port || ok != tc.ok {
-			t.Errorf("splitAddrPort(%q) = (%q, %d, %v), want (%q, %d, %v)",
+			t.Errorf("SplitAddrPort(%q) = (%q, %d, %v), want (%q, %d, %v)",
 				tc.in, ip, port, ok, tc.ip, tc.port, tc.ok)
 		}
 	}

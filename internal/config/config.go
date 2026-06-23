@@ -14,8 +14,16 @@ type Config struct {
 	MetricsPath   string
 	SsPath        string
 	ConntrackPath string
+	ByteSource    string
 	ScrapeTimeout time.Duration
 }
+
+// Valid byte source values.
+const (
+	ByteSourceAuto      = "auto"
+	ByteSourceConntrack = "conntrack"
+	ByteSourceTCPInfo   = "ss-tcpinfo"
+)
 
 // Load parses CLI flags, allowing env overrides as defaults.
 func Load() *Config {
@@ -39,14 +47,25 @@ func Load() *Config {
 
 	flag.StringVar(&c.ConntrackPath, "conntrack-path",
 		envStr("RTMP_CONNTRACK_PATH", "conntrack"),
-		"Path to the conntrack binary (env: RTMP_CONNTRACK_PATH)")
+		"Path to the conntrack binary, used when --byte-source=conntrack (env: RTMP_CONNTRACK_PATH)")
+
+	flag.StringVar(&c.ByteSource, "byte-source",
+		envStr("RTMP_BYTE_SOURCE", ByteSourceAuto),
+		"Source for per-connection byte counters: auto|conntrack|ss-tcpinfo. "+
+			"\"ss-tcpinfo\" uses ss TCP_INFO (no conntrack-tools needed, kernel>=4.6). "+
+			"\"auto\" tries ss-tcpinfo and falls back to conntrack (env: RTMP_BYTE_SOURCE)")
 
 	flag.DurationVar(&c.ScrapeTimeout, "scrape-timeout",
 		envDur("RTMP_SCRAPE_TIMEOUT", 5*time.Second),
-		"Timeout for a single scrape (ss + conntrack) (env: RTMP_SCRAPE_TIMEOUT)")
+		"Timeout for a single scrape (env: RTMP_SCRAPE_TIMEOUT)")
 
 	flag.Parse()
 	return c
+}
+
+// ValidByteSource reports whether the byte source value is recognized.
+func ValidByteSource(s string) bool {
+	return s == ByteSourceAuto || s == ByteSourceConntrack || s == ByteSourceTCPInfo
 }
 
 func envStr(key, def string) string {

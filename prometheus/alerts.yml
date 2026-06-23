@@ -13,14 +13,14 @@ groups:
           summary: "RTMP exporter down on {{ $labels.instance }}"
           description: "The ss-based scrape has been failing for 2 minutes."
 
-      - alert: NetRTMPConntrackUnavailable
-        expr: netrtmp_conntrack_up == 0
+      - alert: NetRTMPByteSourceUnavailable
+        expr: netrtmp_byte_source_up == 0
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "conntrack unavailable on {{ $labels.instance }}"
-          description: "conntrack command is failing; byte counters will not update. Check conntrack-tools and the nf_conntrack module."
+          summary: "RTMP byte source unavailable on {{ $labels.instance }}"
+          description: "The byte source (conntrack or ss-tcpinfo) has been failing for 2 minutes. Byte counters will not update. Check conntrack-tools/nf_conntrack (conntrack mode) or kernel version >= 4.6 (ss-tcpinfo mode)."
 
       - alert: NetRTMPNoConnections
         expr: sum by (instance) (netrtmp_connections_active) == 0

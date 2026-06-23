@@ -41,17 +41,8 @@ func parseLines(out []byte, targetPort int) []Connection {
 		if len(line) == 0 {
 			continue
 		}
-		// Fields: Recv-Q Send-Q LocalAddr:Port PeerAddr:Port [Process...]
-		fields := strings.Fields(string(line))
-		if len(fields) < 4 {
-			continue
-		}
-		localIP, localPort, okL := splitAddrPort(fields[2])
-		destIP, destPort, okD := splitAddrPort(fields[3])
-		if !okL || !okD {
-			continue
-		}
-		if destPort != targetPort {
+		localIP, localPort, destIP, destPort, ok := ParseConnFields(string(line))
+		if !ok || destPort != targetPort {
 			continue
 		}
 		conns = append(conns, Connection{
@@ -64,8 +55,37 @@ func parseLines(out []byte, targetPort int) []Connection {
 	return conns
 }
 
-// splitAddrPort splits "ip:port" or "[ipv6]:port" into its parts.
-func splitAddrPort(s string) (string, int, bool) {
+// ParseConnFields extracts the local and peer address:port from a single `ss`
+// line's whitespace-separated fields. It is robust to the optional leading
+// State column (e.g. "ESTAB") and trailing Process columns: it scans for the
+// first two fields that parse as addr:port. Exported so the tcpinfo package
+// reuses the same logic.
+func ParseConnFields(line string) (localIP string, localPort int, destIP string, destPort int, ok bool) {
+	fields := strings.Fields(line)
+	found := 0
+	for _, f := range fields {
+		ip, port, parsed := SplitAddrPort(f)
+		if !parsed {
+			continue
+		}
+		if found == 0 {
+			localIP, localPort = ip, port
+			found++
+		} else {
+			destIP, destPort = ip, port
+			found++
+			break
+		}
+	}
+	if found < 2 {
+		return "", 0, "", 0, false
+	}
+	return localIP, localPort, destIP, destPort, true
+}
+
+// SplitAddrPort splits "ip:port" or "[ipv6]:port" into its parts.
+// Exported so the tcpinfo package can reuse the same address parsing.
+func SplitAddrPort(s string) (string, int, bool) {
 	if strings.HasPrefix(s, "[") {
 		idx := strings.Index(s, "]:")
 		if idx < 0 {
